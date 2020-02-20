@@ -1,0 +1,17 @@
+
+
+
+# latex stuff
+*/*/*.fls
+*/*/*.fdb_latexmk
+*/*/*.aux
+*/*/*.zip
+*/*/*.fdb_latexmk
+*/*/*.out
+*/*/*.gz
+*/*/*.log
+*/*/*.pytxcode
+
+# compilied python
+__pycache__/
+*.pyc
