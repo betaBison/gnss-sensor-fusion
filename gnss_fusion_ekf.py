@@ -15,31 +15,41 @@ import math
 import progress.bar
 
 class EKF():
-    def __init__(self,odom_file,sat_file):
+    def __init__(self,sat_file,odom_file=None):
         # read in data files as dataframe
-        self.odom_df = pd.read_csv(odom_file, index_col=0)
         self.sat_df = pd.read_csv(sat_file, index_col=0)
+        if odom_file != None:
+            self.odom_df = pd.read_csv(odom_file, index_col=0)
+            print(self.odom_df.head)
 
-        # initial lat and lon from dji data
-        lat0 = np.mean(self.odom_df['GPS(0):Lat[degrees]'][0])
-        lon0 = np.mean(self.odom_df['GPS(0):Long[degrees]'][0])
-        h0 = 0.0
+            # initial lat and lon from dji data
+            lat0 = np.mean(self.odom_df['GPS(0):Lat[degrees]'][0])
+            lon0 = np.mean(self.odom_df['GPS(0):Long[degrees]'][0])
+            h0 = 0.0
 
-        # initial and final time values
-        # self.ti = min(self.odom_df['seconds of week [s]'].min(),self.sat_df['seconds of week [s]'].min())
-        # self.tf = max(self.odom_df['seconds of week [s]'].max(),self.sat_df['seconds of week [s]'].max())
+            # convert lat lon to ecef frame
+            self.lla = pyproj.Proj(proj='latlong', ellps='WGS84', datum='WGS84')
+            self.ecef = pyproj.Proj(proj='geocent', ellps='WGS84', datum='WGS84')
+            x0, y0, z0 = pyproj.transform(self.lla, self.ecef, lon0, lat0, h0 , radians=False)
 
-        # concatenate possible time steps from each data file
-        self.times = np.concatenate((self.odom_df['seconds of week [s]'].to_numpy(),self.sat_df['seconds of week [s]'].to_numpy()))
+            # concatenate possible time steps from each data file
+            self.times = np.concatenate((self.odom_df['seconds of week [s]'].to_numpy(),self.sat_df['seconds of week [s]'].to_numpy()))
+
+            # initial and final time values
+            # self.ti = min(self.odom_df['seconds of week [s]'].min(),self.sat_df['seconds of week [s]'].min())
+            # self.tf = max(self.odom_df['seconds of week [s]'].max(),self.sat_df['seconds of week [s]'].max())
+
+        else:
+            # set initial positions
+            x0 = 0.
+            y0 = 0.
+            z0 = 0.
+
+            # initialize times
+            self.times = self.sat_df['seconds of week [s]'].to_numpy()
+
+        # sort timesteps and force unique
         self.times = np.sort(np.unique(self.times))
-
-        # convert lat lon to ecef frame
-        self.lla = pyproj.Proj(proj='latlong', ellps='WGS84', datum='WGS84')
-        self.ecef = pyproj.Proj(proj='geocent', ellps='WGS84', datum='WGS84')
-        x0, y0, z0 = pyproj.transform(self.lla, self.ecef, lon0, lat0, h0 , radians=False)
-        # x0 += -96000.
-        # y0 += -30000.
-        # z0 += -90000.
 
         # initialize state vector [ x, y, z ]
         self.mu = np.array([[x0,y0,z0]]).T
@@ -50,8 +60,9 @@ class EKF():
         self.P = np.eye(self.mu_n)
         self.P_history = [np.trace(self.P)]
 
-        self.check_data(self.mu,lat0,lon0)
-
+        if odom_file != None:
+            # only use the best satellites
+            self.check_data(self.mu,lat0,lon0)
 
 
     def ECEF_2_ENU(self,x_ECEF,xref,lat0,lon0):
@@ -282,6 +293,6 @@ class EKF():
         plt.show()
 
 if __name__ == '__main__':
-    ekf = EKF('./data/dji_data_flight_1.csv','./data/sat_data_flight_1.csv')
+    ekf = EKF('./data/sat_data_flight_1.csv','./data/dji_data_flight_1.csv')
     ekf.run()
     ekf.plot()
