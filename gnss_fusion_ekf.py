@@ -18,9 +18,9 @@ class EKF():
     def __init__(self,sat_file,odom_file=None):
         # read in data files as dataframe
         self.sat_df = pd.read_csv(sat_file, index_col=0)
+        self.odom_file = odom_file
         if odom_file != None:
             self.odom_df = pd.read_csv(odom_file, index_col=0)
-            print(self.odom_df.head)
 
             # initial lat and lon from dji data
             lat0 = np.mean(self.odom_df['GPS(0):Lat[degrees]'][0])
@@ -38,6 +38,8 @@ class EKF():
             # initial and final time values
             # self.ti = min(self.odom_df['seconds of week [s]'].min(),self.sat_df['seconds of week [s]'].min())
             # self.tf = max(self.odom_df['seconds of week [s]'].max(),self.sat_df['seconds of week [s]'].max())
+
+            self.initialized_odom = False
 
         else:
             # set initial positions
@@ -60,7 +62,7 @@ class EKF():
         self.P = np.eye(self.mu_n)
         self.P_history = [np.trace(self.P)]
 
-        if odom_file != None:
+        if odom_file != None and 'pr [m]' in self.sat_df.columns:
             # only use the best satellites
             self.check_data(self.mu,lat0,lon0)
 
@@ -140,7 +142,7 @@ class EKF():
         self.mu = F.dot(self.mu) + B.dot(odom)
 
         # build process noise matrix
-        Q_cov = 1E-5
+        Q_cov = 0.5
         Q = np.eye(self.mu_n) * Q_cov
 
         # propagate covariance matrix
@@ -168,7 +170,7 @@ class EKF():
         # propagate covariance matrix
         self.P = F.dot(self.P).dot(F.T) + Q
 
-    def update_gnss(self,mes,sat_x,sat_y,sat_z):
+    def update_gnss_raw(self,mes,sat_x,sat_y,sat_z):
         """
             Desc: ekf update gnss step
             Input(s):
@@ -189,8 +191,39 @@ class EKF():
             h[ii] = dist
         yt = zt - h
 
-        R_cov = 2000.**2
+        R_cov = 8.**2
         R = np.eye(num_sats)*R_cov
+
+        Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
+
+        self.mu = self.mu.reshape((3,1)) + Kt.dot(yt)
+        self.P = (np.eye(self.mu_n)-Kt.dot(H)).dot(self.P).dot((np.eye(self.mu_n)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
+
+        yt = zt - H.dot(self.mu)
+
+        # Kt = self.P.dot(H)
+
+    def update_gnss(self,lat,lon,alt):
+        """
+            Desc: ekf update gnss step
+            Input(s):
+                lat:
+                lon:
+                alt:
+            Output(s):
+                none
+        """
+        # convert lat lon to ecef frame
+        self.lla = pyproj.Proj(proj='latlong', ellps='WGS84', datum='WGS84')
+        self.ecef = pyproj.Proj(proj='geocent', ellps='WGS84', datum='WGS84')
+        xi, yi, zi = pyproj.transform(self.lla, self.ecef, lon, lat, alt , radians=False)
+        zt = np.array([[xi,yi,zi]]).T
+
+        H = np.eye(3)
+        yt = zt - H.dot(self.mu)
+
+        R_cov = 10.**2
+        R = np.eye(3)*R_cov
 
         Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
 
@@ -222,7 +255,8 @@ class EKF():
             if self.odom_df['seconds of week [s]'].isin([timestep]).any():
                 dt_odom = timestep - t_odom_prev
                 t_odom_prev = timestep
-                if tt == 0:
+                if not self.initialized_odom:
+                    self.initialized_odom = True
                     bar.next()
                     continue
                 odom_timestep = self.odom_df[self.odom_df['seconds of week [s]'] == timestep]
@@ -230,16 +264,20 @@ class EKF():
                 odom_vel_y = odom_timestep['ECEF_vel_y'].values[0]
                 odom_vel_z = odom_timestep['ECEF_vel_z'].values[0]
                 self.predict_imu(np.array([[odom_vel_x,odom_vel_y,odom_vel_z]]).T,dt_odom)
-
             # update gnss step
             if self.sat_df['seconds of week [s]'].isin([timestep]).any():
                 sat_timestep = self.sat_df[self.sat_df['seconds of week [s]'] == timestep]
-                pranges = sat_timestep['pr [m]'].to_numpy().reshape(-1,1)
-                sat_x = sat_timestep['sat x ECEF [m]'].to_numpy().reshape(-1,1)
-                sat_y = sat_timestep['sat y ECEF [m]'].to_numpy().reshape(-1,1)
-                sat_z = sat_timestep['sat z ECEF [m]'].to_numpy().reshape(-1,1)
-                self.update_gnss(pranges,sat_x,sat_y,sat_z)
-
+                if 'pr [m]' in self.sat_df.columns:
+                    pranges = sat_timestep['pr [m]'].to_numpy().reshape(-1,1)
+                    sat_x = sat_timestep['sat x ECEF [m]'].to_numpy().reshape(-1,1)
+                    sat_y = sat_timestep['sat y ECEF [m]'].to_numpy().reshape(-1,1)
+                    sat_z = sat_timestep['sat z ECEF [m]'].to_numpy().reshape(-1,1)
+                    self.update_gnss_raw(pranges,sat_x,sat_y,sat_z)
+                else:
+                    lat_t = sat_timestep['Latitude'].to_numpy()[0]
+                    lon_t = sat_timestep['Longitude'].to_numpy()[0]
+                    alt_t = sat_timestep['Altitude'].to_numpy()[0]
+                    self.update_gnss(lat_t,lon_t,alt_t)
             # add values to history
             self.mu_history = np.hstack((self.mu_history,self.mu))
             self.P_history.append(np.trace(self.P))
@@ -247,7 +285,10 @@ class EKF():
 
 
         bar.finish() # end progress bar
-
+        # if finish with different num of items, spoof it.
+        if len(self.times) + 1 == self.mu_history.shape[1]:
+            self.mu_history = self.mu_history[:,:-1]
+            self.P_history = self.P_history[:-1]
 
     def plot(self):
         fig, ax = plt.subplots()
@@ -285,7 +326,15 @@ class EKF():
         lla_traj[:,2] = alt
         fig, ax = plt.subplots()
         ax.ticklabel_format(useOffset=False)
-        plt.plot(lla_traj[:,1],lla_traj[:,0])
+        plt.plot(lla_traj[:,1],lla_traj[:,0],label="Our Position Solution")
+
+        if self.odom_file != None:
+            lat_truth = self.odom_df['GPS(0):Lat[degrees]'].to_numpy()
+            lon_truth = self.odom_df['GPS(0):Long[degrees]'].to_numpy()
+            plt.plot(lon_truth,lat_truth,'g',label="DJI's Position Solution")
+        plt.legend()
+        plt.xlim([-122.1759,-122.1754])
+        plt.ylim([37.42620,37.42660])
         plt.title("Trajectory")
         plt.xlabel("Longitude")
         plt.ylabel("Latitude")
@@ -293,6 +342,6 @@ class EKF():
         plt.show()
 
 if __name__ == '__main__':
-    ekf = EKF('./data/sat_data_flight_1.csv','./data/dji_data_flight_1.csv')
+    ekf = EKF('./data/android_fix_1.csv','./data/dji_data_flight_1.csv')
     ekf.run()
     ekf.plot()
