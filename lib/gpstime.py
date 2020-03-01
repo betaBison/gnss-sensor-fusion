@@ -47,7 +47,7 @@ secsInDay = 86400
 gpsEpoch = (1980, 1, 6, 0, 0, 0)  # (year, month, day, hh, mm, ss)
 
 
-def gpsFromUTC(year, month, day, hour, min, sec, leapSecs=14):
+def gpsFromUTC(year, month, day, hour, min, sec, leapSecs=18):
     """converts UTC to: gpsWeek, secsOfWeek, gpsDay, secsOfDay
 
     a good reference is:  http://www.oc.nps.navy.mil/~jclynch/timsys.html
