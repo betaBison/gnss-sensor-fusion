@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import pyproj
 import math
 import progress.bar
+from mpl_toolkits.mplot3d import Axes3D
 
 class EKF():
     def __init__(self,sat_file,odom_file=None):
@@ -54,12 +55,12 @@ class EKF():
         self.times = np.sort(np.unique(self.times))
 
         # initialize state vector [ x, y, z ]
-        self.mu = np.array([[x0,y0,z0]]).T
+        self.mu = np.array([[x0,y0,z0,0.0]]).T
         self.mu_n = self.mu.shape[0]
         self.mu_history = self.mu.copy()
 
         # initialize covariance matrix
-        self.P = np.eye(self.mu_n)
+        self.P = np.eye(self.mu_n)*10E4
         self.P_history = [np.trace(self.P)]
 
         if odom_file != None and 'pr [m]' in self.sat_df.columns:
@@ -99,7 +100,7 @@ class EKF():
             sv_z = sv_subset['sat z ECEF [m]'].to_numpy().reshape((1,-1))
             sv_time = sv_subset['seconds of week [s]'].to_numpy()
             sv_xyz = np.vstack((sv_x,sv_y,sv_z))
-            sv_ENU = self.ECEF_2_ENU(sv_xyz,self.mu,lat0,lon0)
+            sv_ENU = self.ECEF_2_ENU(sv_xyz,self.mu[:3],lat0,lon0)
 
 
             elev_angles = np.degrees(np.arctan2(sv_ENU[2,:],np.sqrt(sv_ENU[0,:]**2 + sv_ENU[1,:]**2)))
@@ -132,6 +133,9 @@ class EKF():
             Output(s):
                 none
         """
+        # add zero to end of odom
+        odom = np.vstack((odom,[0.0]))
+
         # build state transition model matrix
         F = np.eye(self.mu_n)
 
@@ -170,7 +174,7 @@ class EKF():
         # propagate covariance matrix
         self.P = F.dot(self.P).dot(F.T) + Q
 
-    def update_gnss_raw(self,mes,sat_x,sat_y,sat_z):
+    def update_gnss_raw(self,mes,sat_x,sat_y,sat_z,sigmas,time_correction):
         """
             Desc: ekf update gnss step
             Input(s):
@@ -181,22 +185,27 @@ class EKF():
         """
         num_sats = mes.shape[0]
         zt = mes
-        H = np.zeros((num_sats,3))
+        H = np.zeros((num_sats,self.mu_n))
         h = np.zeros((num_sats,1))
+        R = np.eye(num_sats)
         for ii in range(num_sats):
             dist = np.sqrt((sat_x[ii]-self.mu[0])**2 + (sat_y[ii]-self.mu[1])**2 + (sat_z[ii]-self.mu[2])**2)
             H[ii,0] = (self.mu[0]-sat_x[ii])/dist
             H[ii,1] = (self.mu[1]-sat_y[ii])/dist
             H[ii,2] = (self.mu[2]-sat_z[ii])/dist
-            h[ii] = dist
+            H[ii,3] = 1.0
+            c = 299792458.0
+            h[ii] = dist + self.mu[3] - time_correction[ii] * c # adjusting for relativity??
+            R[ii,ii] *= sigmas[ii]**2
         yt = zt - h
 
-        R_cov = 8.**2
-        R = np.eye(num_sats)*R_cov
+        # R_cov = 8.**2
+        # R = np.eye(num_sats)*R_cov
+
 
         Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
 
-        self.mu = self.mu.reshape((3,1)) + Kt.dot(yt)
+        self.mu = self.mu.reshape((-1,1)) + Kt.dot(yt)
         self.P = (np.eye(self.mu_n)-Kt.dot(H)).dot(self.P).dot((np.eye(self.mu_n)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
 
         yt = zt - H.dot(self.mu)
@@ -220,17 +229,17 @@ class EKF():
         zt = np.array([[xi,yi,zi]]).T
 
         H = np.eye(3)
-        yt = zt - H.dot(self.mu)
+        yt = zt - H.dot(self.mu[:3])
 
         R_cov = 10.**2
         R = np.eye(3)*R_cov
 
-        Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
+        Kt = self.P[:3,:3].dot(H.T).dot(np.linalg.inv(R + H.dot(self.P[:3,:3]).dot(H.T)))
 
-        self.mu = self.mu.reshape((3,1)) + Kt.dot(yt)
-        self.P = (np.eye(self.mu_n)-Kt.dot(H)).dot(self.P).dot((np.eye(self.mu_n)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
+        self.mu[:3] = self.mu[:3].reshape((3,1)) + Kt.dot(yt)
+        self.P[:3,:3] = (np.eye(3)-Kt.dot(H)).dot(self.P[:3,:3]).dot((np.eye(3)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
 
-        yt = zt - H.dot(self.mu)
+        yt = zt - H.dot(self.mu[:3])
 
         # Kt = self.P.dot(H)
 
@@ -272,12 +281,15 @@ class EKF():
                     sat_x = sat_timestep['sat x ECEF [m]'].to_numpy().reshape(-1,1)
                     sat_y = sat_timestep['sat y ECEF [m]'].to_numpy().reshape(-1,1)
                     sat_z = sat_timestep['sat z ECEF [m]'].to_numpy().reshape(-1,1)
-                    self.update_gnss_raw(pranges,sat_x,sat_y,sat_z)
+                    sigmas = sat_timestep['Pr_sigma'].to_numpy().reshape(-1,1)
+                    time_correction = sat_timestep['idk wtf this is'].to_numpy().reshape(-1,1)
+                    self.update_gnss_raw(pranges,sat_x,sat_y,sat_z,sigmas,time_correction)
                 else:
                     lat_t = sat_timestep['Latitude'].to_numpy()[0]
                     lon_t = sat_timestep['Longitude'].to_numpy()[0]
                     alt_t = sat_timestep['Altitude'].to_numpy()[0]
                     self.update_gnss(lat_t,lon_t,alt_t)
+            # self.predict_simple()
             # add values to history
             self.mu_history = np.hstack((self.mu_history,self.mu))
             self.P_history.append(np.trace(self.P))
@@ -293,23 +305,29 @@ class EKF():
     def plot(self):
         fig, ax = plt.subplots()
         ax.ticklabel_format(useOffset=False)
-        plt.subplot(131)
+        plt.subplot(141)
         plt.plot(self.times,self.mu_history[0,:])
         plt.title("X vs Time")
         plt.xlabel("Time [hrs]")
         plt.ylabel("X [m]")
 
-        plt.subplot(132)
+        plt.subplot(142)
         plt.plot(self.times,self.mu_history[1,:])
         plt.title("Y vs Time")
         plt.xlabel("Time [hrs]")
         plt.ylabel("Y [m]")
 
-        plt.subplot(133)
+        plt.subplot(143)
         plt.plot(self.times,self.mu_history[2,:])
         plt.title("Z vs Time")
         plt.xlabel("Time [hrs]")
         plt.ylabel("Z [m]")
+
+        plt.subplot(144)
+        plt.plot(self.times,self.mu_history[3,:])
+        plt.title("Time Bias vs Time")
+        plt.xlabel("Time [hrs]")
+        plt.ylabel("Time Bias [m]")
 
         # covariance plot
         plt.figure()
@@ -338,6 +356,18 @@ class EKF():
         plt.title("Trajectory")
         plt.xlabel("Longitude")
         plt.ylabel("Latitude")
+
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+        ax.plot(lla_traj[:,1], lla_traj[:,0], lla_traj[:,2], label='our solution')
+        ax.legend()
+
+        # save to file
+        df_traj = pd.DataFrame()
+        df_traj['latitude'] = lla_traj[:,0]
+        df_traj['longitude'] = lla_traj[:,1]
+        df_traj['elevation'] = lla_traj[:,2]
+        df_traj.to_csv('./data/calculated_trajectory.csv',index=False)
 
         plt.show()
 
