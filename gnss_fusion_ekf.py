@@ -60,12 +60,12 @@ class EKF():
         self.mu_history = self.mu.copy()
 
         # initialize covariance matrix
-        self.P = np.eye(self.mu_n)*10E4
+        self.P = np.eye(self.mu_n)*10E2
         self.P_history = [np.trace(self.P)]
 
-        if odom_file != None and 'pr [m]' in self.sat_df.columns:
-            # only use the best satellites
-            self.check_data(self.mu,lat0,lon0)
+        # if odom_file != None and 'pr [m]' in self.sat_df.columns:
+        #     # only use the best satellites
+        #     self.check_data(self.mu,lat0,lon0)
 
 
     def ECEF_2_ENU(self,x_ECEF,xref,lat0,lon0):
@@ -372,6 +372,6 @@ class EKF():
         plt.show()
 
 if __name__ == '__main__':
-    ekf = EKF('./data/android_fix_1.csv','./data/dji_data_flight_1.csv')
+    ekf = EKF('./data/sat_data_v2_flight_1.csv','./data/dji_data_flight_1.csv')
     ekf.run()
     ekf.plot()
