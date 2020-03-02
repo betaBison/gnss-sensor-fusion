@@ -61,7 +61,7 @@ class EKF():
 
 
         # initialize covariance matrix
-        self.P = np.eye(self.mu_n)*10E4
+        self.P = np.eye(self.mu_n)*10E2
         self.P_history = [np.trace(self.P)]
 
         # if odom_file != None:
@@ -312,7 +312,7 @@ class EKF():
             H[ii,1] = (self.mu[1]-sat_y[ii])/dist
             H[ii,2] = (self.mu[2]-sat_z[ii])/dist
             H[ii,3] = 1.0
-            c = 3.0E8
+            c = 299792458.0
             h[ii] = dist + self.mu[3] - time_correction[ii] * c # adjusting for relativity??
             R[ii,ii] *= sigmas[ii]**2
         yt = zt - h
