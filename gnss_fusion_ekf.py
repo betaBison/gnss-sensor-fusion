@@ -63,9 +63,10 @@ class EKF():
         self.P = np.eye(self.mu_n)*10E2
         self.P_history = [np.trace(self.P)]
 
-        # if odom_file != None and 'pr [m]' in self.sat_df.columns:
-        #     # only use the best satellites
-        #     self.check_data(self.mu,lat0,lon0)
+        if odom_file != None and 'pr [m]' in self.sat_df.columns:
+            # only use the best satellites
+            self.cutoff_angle = 20.0
+            self.check_data(self.mu,lat0,lon0,False)
 
 
     def ECEF_2_ENU(self,x_ECEF,xref,lat0,lon0):
@@ -90,39 +91,33 @@ class EKF():
         x_ENU = np.dot(T_enu,(x_ECEF-x_REF))
         return x_ENU
 
-    def check_data(self,xref,lat0,lon0):
-        # ans = self.ECEF_2_ENU(self.mu,self.mu,lat0,lon0)
-        SVs = np.sort(np.unique(self.sat_df['SV']))
-        for sv in SVs:
-            sv_subset = self.sat_df[self.sat_df['SV'] == sv]
-            sv_x = sv_subset['sat x ECEF [m]'].to_numpy().reshape((1,-1))
-            sv_y = sv_subset['sat y ECEF [m]'].to_numpy().reshape((1,-1))
-            sv_z = sv_subset['sat z ECEF [m]'].to_numpy().reshape((1,-1))
-            sv_time = sv_subset['seconds of week [s]'].to_numpy()
-            sv_xyz = np.vstack((sv_x,sv_y,sv_z))
-            sv_ENU = self.ECEF_2_ENU(sv_xyz,self.mu[:3],lat0,lon0)
+    def check_data(self,xref,lat0,lon0,plot_it = False):
+        sv_x = self.sat_df['sat x ECEF [m]'].to_numpy().reshape((1,-1))
+        sv_y = self.sat_df['sat y ECEF [m]'].to_numpy().reshape((1,-1))
+        sv_z = self.sat_df['sat z ECEF [m]'].to_numpy().reshape((1,-1))
+        sv_time = self.sat_df['seconds of week [s]'].to_numpy()
+        sv_xyz = np.vstack((sv_x,sv_y,sv_z))
+        sv_ENU = self.ECEF_2_ENU(sv_xyz,self.mu[:3],lat0,lon0)
+        elev_angles = np.degrees(np.arctan2(sv_ENU[2,:],np.sqrt(sv_ENU[0,:]**2 + sv_ENU[1,:]**2)))
+        self.sat_df['elevation_angle'] = elev_angles
 
 
-            elev_angles = np.degrees(np.arctan2(sv_ENU[2,:],np.sqrt(sv_ENU[0,:]**2 + sv_ENU[1,:]**2)))
-            # if sv in [7,30,28,9,8,5]:
-            # if True:
-                # plt.plot(sv_time,elev_angles,label=sv)
-                # plt.ylabel('Elevation Angle [degrees]')
-                # plt.legend()
-                # plt.title("Elevation Angle vs. Time")
-        # plt.legend()
-        # plt.show()
+        if plot_it:
+            SVs = np.sort(np.unique(self.sat_df['SV']))
+            for sv in SVs:
+                sv_subset = self.sat_df[self.sat_df['SV'] == sv]
+                subset_time = sv_subset['seconds of week [s]'].to_numpy()
+                subset_angle = sv_subset['elevation_angle'].to_numpy()
+                # if sv in [7,30,28,9,8,5]:
+                if True:
+                    plt.plot(subset_time,subset_angle,label=sv)
+                    plt.ylabel('Elevation Angle [degrees]')
+                    plt.legend()
+                    plt.title("Elevation Angle vs. Time")
+            plt.legend()
+            plt.show()
 
-        is7 = self.sat_df['SV'] == 7
-        is30 = self.sat_df['SV'] == 30
-        is28 = self.sat_df['SV'] == 28
-        is9 = self.sat_df['SV'] == 9
-        is8 = self.sat_df['SV'] == 8
-        is5 = self.sat_df['SV'] == 5
-
-        self.sat_df = self.sat_df[is7 | is30 | is28 | is9 | is8 | is5]
-
-
+        self.sat_df = self.sat_df[self.sat_df['elevation_angle'] > self.cutoff_angle]
 
     def predict_imu(self,odom,dt):
         """
@@ -260,6 +255,9 @@ class EKF():
 
 
         for tt, timestep in enumerate(self.times):
+            # simple predict step
+            self.predict_simple()
+
             # predict step for odometry
             if self.odom_df['seconds of week [s]'].isin([timestep]).any():
                 dt_odom = timestep - t_odom_prev
@@ -272,7 +270,7 @@ class EKF():
                 odom_vel_x = odom_timestep['ECEF_vel_x'].values[0]
                 odom_vel_y = odom_timestep['ECEF_vel_y'].values[0]
                 odom_vel_z = odom_timestep['ECEF_vel_z'].values[0]
-                self.predict_imu(np.array([[odom_vel_x,odom_vel_y,odom_vel_z]]).T,dt_odom)
+                # self.predict_imu(np.array([[odom_vel_x,odom_vel_y,odom_vel_z]]).T,dt_odom)
             # update gnss step
             if self.sat_df['seconds of week [s]'].isin([timestep]).any():
                 sat_timestep = self.sat_df[self.sat_df['seconds of week [s]'] == timestep]
@@ -289,7 +287,7 @@ class EKF():
                     lon_t = sat_timestep['Longitude'].to_numpy()[0]
                     alt_t = sat_timestep['Altitude'].to_numpy()[0]
                     self.update_gnss(lat_t,lon_t,alt_t)
-            # self.predict_simple()
+
             # add values to history
             self.mu_history = np.hstack((self.mu_history,self.mu))
             self.P_history.append(np.trace(self.P))
