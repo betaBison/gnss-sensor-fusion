@@ -1,3 +1,13 @@
+# latex stuff
+*/*.fls
+*/*.fdb_latexmk
+*/*.aux
+*/*.zip
+*/*.fdb_latexmk
+*/*.out
+*/*.gz
+*/*.log
+*/*.pytxcode
 
 
 

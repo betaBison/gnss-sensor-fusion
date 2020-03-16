@@ -147,6 +147,32 @@ class EKF():
         # propagate covariance matrix
         self.P = F.dot(self.P).dot(F.T) + Q
 
+    def update_barometer(self,baro):
+        """
+            Desc: ekf barometer update step
+            Input(s):
+                baro:   barometer reading
+            Output(s):
+                none
+        """
+        # add zero to end of odom
+        zt = np.vstack(([0.,0.],baro,[0.0]))
+
+        # create measurement noise matrix
+        R = np.eye(self.mu_n)*0.5**2
+
+        hu = np.zeros((4,1))
+        hu[0:3,0] = (self.mu_history[:3,-1] - self.mu_history[:3,-2])/dt
+        yt = zt - hu
+        H = np.eye(self.mu_n)
+
+        Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
+
+        self.mu = self.mu.reshape((-1,1)) + Kt.dot(yt)
+        # self.P = (np.eye(self.mu_n)-Kt.dot(H)).dot(self.P).dot((np.eye(self.mu_n)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
+
+        yt = zt - H.dot(self.mu)
+
     def predict_simple(self):
         """
             Desc: ekf simple predict step
@@ -162,7 +188,7 @@ class EKF():
         self.mu = F.dot(self.mu)
 
         # build process noise matrix
-        Q_cov = 0.5
+        Q_cov = 0.2
         Q = np.eye(self.mu_n) * Q_cov
         # Q = np.ones((3,3)) * Q_cov
 
@@ -197,6 +223,52 @@ class EKF():
         # R_cov = 8.**2
         # R = np.eye(num_sats)*R_cov
 
+        Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
+
+        self.mu = self.mu.reshape((-1,1)) + Kt.dot(yt)
+        self.P = (np.eye(self.mu_n)-Kt.dot(H)).dot(self.P).dot((np.eye(self.mu_n)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
+
+        yt = zt - H.dot(self.mu)
+
+        # Kt = self.P.dot(H)
+
+
+    def update_gnss_raw_and_baro(self,mes,sat_x,sat_y,sat_z,sigmas,time_correction):
+        """
+            Desc: ekf update gnss step
+            Input(s):
+                mes:    psuedorange measurements [N x 1]
+                sat_pos satellite position [N x 3]
+            Output(s):
+                none
+        """
+        num_sats = mes.shape[0]
+        zt = mes
+        H = np.zeros((num_sats+1,self.mu_n))
+        h = np.zeros((num_sats+1,1))
+        R = np.eye(num_sats+1)
+        for ii in range(num_sats):
+            dist = np.sqrt((sat_x[ii]-self.mu[0])**2 + (sat_y[ii]-self.mu[1])**2 + (sat_z[ii]-self.mu[2])**2)
+            H[ii,0] = (self.mu[0]-sat_x[ii])/dist
+            H[ii,1] = (self.mu[1]-sat_y[ii])/dist
+            H[ii,2] = (self.mu[2]-sat_z[ii])/dist
+            H[ii,3] = 1.0
+            c = 299792458.0
+            h[ii] = dist + self.mu[3] - time_correction[ii] * c # adjusting for relativity??
+            R[ii,ii] *= (sigmas[ii])**2
+
+        # barometer
+        # H[num_sats,0] =
+        # H[num_sats,1] =
+        # H[num_sats,2] =
+        # H[num_sats,3] =
+        # h[num_sats] =
+        # R[num_sats,num_sats] *= 0.0001
+
+        yt = zt - h
+
+        # R_cov = 8.**2
+        # R = np.eye(num_sats)*R_cov
 
         Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
 
@@ -256,7 +328,7 @@ class EKF():
 
         for tt, timestep in enumerate(self.times):
             # simple predict step
-            self.predict_simple()
+            # self.predict_simple()
 
             # predict step for odometry
             if self.odom_df['seconds of week [s]'].isin([timestep]).any():
@@ -265,12 +337,12 @@ class EKF():
                 if not self.initialized_odom:
                     self.initialized_odom = True
                     bar.next()
-                    continue
-                odom_timestep = self.odom_df[self.odom_df['seconds of week [s]'] == timestep]
-                odom_vel_x = odom_timestep['ECEF_vel_x'].values[0]
-                odom_vel_y = odom_timestep['ECEF_vel_y'].values[0]
-                odom_vel_z = odom_timestep['ECEF_vel_z'].values[0]
-                # self.predict_imu(np.array([[odom_vel_x,odom_vel_y,odom_vel_z]]).T,dt_odom)
+                else:
+                    odom_timestep = self.odom_df[self.odom_df['seconds of week [s]'] == timestep]
+                    odom_vel_x = odom_timestep['ECEF_vel_x'].values[0]
+                    odom_vel_y = odom_timestep['ECEF_vel_y'].values[0]
+                    odom_vel_z = odom_timestep['ECEF_vel_z'].values[0]
+                    self.predict_imu(np.array([[odom_vel_x,odom_vel_y,odom_vel_z]]).T,dt_odom)
             # update gnss step
             if self.sat_df['seconds of week [s]'].isin([timestep]).any():
                 sat_timestep = self.sat_df[self.sat_df['seconds of week [s]'] == timestep]
@@ -282,6 +354,7 @@ class EKF():
                     sigmas = sat_timestep['Pr_sigma'].to_numpy().reshape(-1,1)
                     time_correction = sat_timestep['idk wtf this is'].to_numpy().reshape(-1,1)
                     self.update_gnss_raw(pranges,sat_x,sat_y,sat_z,sigmas,time_correction)
+                    # self.update_gnss_raw(pranges,sat_x,sat_y,sat_z,sigmas,time_correction)
                 else:
                     lat_t = sat_timestep['Latitude'].to_numpy()[0]
                     lon_t = sat_timestep['Longitude'].to_numpy()[0]
