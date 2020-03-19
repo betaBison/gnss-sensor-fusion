@@ -49,14 +49,11 @@ while tt < N-1:
     # print(np.linspace(0.0,1.0-(1.0/tt_num),tt_num).reshape(tt_num,1).shape)
     time_gps[tt-tt_num:tt,1] += np.linspace(0.0,1.0-(1.0/tt_num),tt_num)
     tt_time = time_gps[tt,1]
-print(types)
 
 # plt.figure()
 # plt.plot(np.arange(N),time_gps[:,1])
 # for ii in range(N):
 #     print(ii,time_gps[ii,1])
-
-
 
 # import velocities
 vel_n = df['IMU_ATTI(0):velN[meters/Sec]'].to_numpy()
@@ -70,7 +67,7 @@ print(vel_n.shape)
 gps_lat = df['GPS(0):Lat[degrees]'].to_numpy()
 gps_lon = df['GPS(0):Long[degrees]'].to_numpy()
 baro_h = df['IMU_ATTI(0):barometer:Raw[meters]'].to_numpy()
-baro_h -= baro_h[0]
+gps_h = df['IMU_ATTI(0):barometer:Smooth[meters]'].to_numpy().copy()
 
 vel_ecef = np.zeros((N,3))
 
@@ -83,6 +80,8 @@ vel_ecef_comp = np.linalg.norm(vel_ecef,axis=1)
 # parse flight 1 data
 f1_initial = np.argwhere(time_gps[:,1] == 594416.0).item(0)
 f1_final = np.argwhere(time_gps[:,1] == 594561.0).item(0)
+gps_h -= gps_h[f1_initial]
+baro_h -= (baro_h[f1_initial] + 0.95) # subtract initial baro plus arbitrary offset
 print(f1_initial,f1_final)
 
 # save to file
@@ -98,6 +97,7 @@ df1['IMU_ATTI(0):velH[meters/Sec]'] = vel_h[f1_initial:f1_final]
 df1['IMU_ATTI(0):velComposite[meters/Sec]'] = vel_comp[f1_initial:f1_final]
 df1['GPS(0):Lat[degrees]'] = gps_lat[f1_initial:f1_final]
 df1['GPS(0):Long[degrees]'] = gps_lon[f1_initial:f1_final]
+df1['GPS(0):heightMSL[meters]'] = gps_h[f1_initial:f1_final]
 df1['Normalized barometer:Raw[meters]'] = baro_h[f1_initial:f1_final]
 df1.to_csv('./data/dji_data_flight_1.csv')
 
@@ -105,7 +105,7 @@ fig, ax = plt.subplots()
 ax.ticklabel_format(useOffset=False)
 plt.plot(gps_lon[f1_initial:f1_final],gps_lat[f1_initial:f1_final])
 plt.title("DJI Proprietary Position Solution")
-plt.show()
+# plt.show()
 
 # parse flight 2 data
 f2_initial = np.argwhere(time_gps[:,1] == 594595.0).item(0)
@@ -125,6 +125,7 @@ df2['IMU_ATTI(0):velH[meters/Sec]'] = vel_h[f2_initial:f2_final]
 df2['IMU_ATTI(0):velComposite[meters/Sec]'] = vel_comp[f2_initial:f2_final]
 df2['GPS(0):Lat[degrees]'] = gps_lat[f2_initial:f2_final]
 df2['GPS(0):Long[degrees]'] = gps_lon[f2_initial:f2_final]
+df2['GPS(0):heightMSL[meters]'] = gps_h[f2_initial:f2_final]
 df2['Normalized barometer:Raw[meters]'] = baro_h[f2_initial:f2_final]
 df2.to_csv('./data/dji_data_flight_2.csv')
 
@@ -146,6 +147,7 @@ df3['IMU_ATTI(0):velH[meters/Sec]'] = vel_h[f3_initial:f3_final]
 df3['IMU_ATTI(0):velComposite[meters/Sec]'] = vel_comp[f3_initial:f3_final]
 df3['GPS(0):Lat[degrees]'] = gps_lat[f3_initial:f3_final]
 df3['GPS(0):Long[degrees]'] = gps_lon[f3_initial:f3_final]
+df3['GPS(0):heightMSL[meters]'] = gps_h[f3_initial:f3_final]
 df3['Normalized barometer:Raw[meters]'] = baro_h[f3_initial:f3_final]
 df3.to_csv('./data/dji_data_flight_3.csv')
 
@@ -158,7 +160,7 @@ plt.legend()
 
 fig = plt.figure()
 ax = fig.gca(projection='3d')
-ax.plot(gps_lon, gps_lat, baro_h, label='ned')
+ax.plot(gps_lon, gps_lat, gps_h, label='ned')
 ax.legend()
 
 fig = plt.figure()
@@ -181,7 +183,7 @@ plt.plot(time_gps[f2_initial:f2_final,1],vel_comp[f2_initial:f2_final])
 plt.figure()
 plt.plot(time_gps[f3_initial:f3_final,1],vel_comp[f3_initial:f3_final])
 
-plt.show()
+# plt.show()
 
 
 
