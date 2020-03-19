@@ -36,11 +36,25 @@ class EKF():
             # concatenate possible time steps from each data file
             self.times = np.concatenate((self.odom_df['seconds of week [s]'].to_numpy(),self.sat_df['seconds of week [s]'].to_numpy()))
 
+            # sort timesteps and force unique
+            self.times = np.sort(np.unique(self.times))
+
             # initial and final time values
             # self.ti = min(self.odom_df['seconds of week [s]'].min(),self.sat_df['seconds of week [s]'].min())
             # self.tf = max(self.odom_df['seconds of week [s]'].max(),self.sat_df['seconds of week [s]'].max())
 
             self.initialized_odom = False
+
+            def find_nearest(array, value):
+                array = np.asarray(array)
+                idx = (np.abs(array - value)).argmin()
+                return idx
+
+            # indexes for plotting truth later
+            self.truth_indexes = []
+            for ii in range(len(self.times)):
+                ix = find_nearest(self.odom_df['seconds of week [s]'].to_numpy(),self.times[ii])
+                self.truth_indexes.append(ix)
 
         else:
             # set initial positions
@@ -51,8 +65,7 @@ class EKF():
             # initialize times
             self.times = self.sat_df['seconds of week [s]'].to_numpy()
 
-        # sort timesteps and force unique
-        self.times = np.sort(np.unique(self.times))
+
 
         # initialize state vector [ x, y, z ]
         self.mu = np.array([[x0,y0,z0,0.0]]).T
@@ -141,56 +154,8 @@ class EKF():
         self.mu = F.dot(self.mu) + B.dot(odom)
 
         # build process noise matrix
-        Q_cov = 0.5
+        Q_cov = 0.25
         Q = np.eye(self.mu_n) * Q_cov
-
-        # propagate covariance matrix
-        self.P = F.dot(self.P).dot(F.T) + Q
-
-    def update_barometer(self,baro):
-        """
-            Desc: ekf barometer update step
-            Input(s):
-                baro:   barometer reading
-            Output(s):
-                none
-        """
-        # add zero to end of odom
-        zt = np.vstack(([0.,0.],baro,[0.0]))
-
-        # create measurement noise matrix
-        R = np.eye(self.mu_n)*0.5**2
-
-        hu = np.zeros((4,1))
-        hu[0:3,0] = (self.mu_history[:3,-1] - self.mu_history[:3,-2])/dt
-        yt = zt - hu
-        H = np.eye(self.mu_n)
-
-        Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
-
-        self.mu = self.mu.reshape((-1,1)) + Kt.dot(yt)
-        # self.P = (np.eye(self.mu_n)-Kt.dot(H)).dot(self.P).dot((np.eye(self.mu_n)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
-
-        yt = zt - H.dot(self.mu)
-
-    def predict_simple(self):
-        """
-            Desc: ekf simple predict step
-            Input(s):
-                dt:     time step difference
-            Output(s):
-                none
-        """
-        # build state transition model matrix
-        F = np.eye(self.mu_n)
-
-        # update predicted state
-        self.mu = F.dot(self.mu)
-
-        # build process noise matrix
-        Q_cov = 0.2
-        Q = np.eye(self.mu_n) * Q_cov
-        # Q = np.ones((3,3)) * Q_cov
 
         # propagate covariance matrix
         self.P = F.dot(self.P).dot(F.T) + Q
@@ -327,9 +292,6 @@ class EKF():
 
 
         for tt, timestep in enumerate(self.times):
-            # simple predict step
-            # self.predict_simple()
-
             # predict step for odometry
             if self.odom_df['seconds of week [s]'].isin([timestep]).any():
                 dt_odom = timestep - t_odom_prev
@@ -354,7 +316,6 @@ class EKF():
                     sigmas = sat_timestep['Pr_sigma'].to_numpy().reshape(-1,1)
                     time_correction = sat_timestep['idk wtf this is'].to_numpy().reshape(-1,1)
                     self.update_gnss_raw(pranges,sat_x,sat_y,sat_z,sigmas,time_correction)
-                    # self.update_gnss_raw(pranges,sat_x,sat_y,sat_z,sigmas,time_correction)
                 else:
                     lat_t = sat_timestep['Latitude'].to_numpy()[0]
                     lon_t = sat_timestep['Longitude'].to_numpy()[0]
@@ -373,7 +334,7 @@ class EKF():
             self.mu_history = self.mu_history[:,:-1]
             self.P_history = self.P_history[:-1]
 
-    def plot(self):
+    def plot(self,alt=np.array([None])):
         fig, ax = plt.subplots()
         ax.ticklabel_format(useOffset=False)
         plt.subplot(141)
@@ -409,7 +370,11 @@ class EKF():
 
         # trajectory plot
         lla_traj = np.zeros((len(self.times),3))
-        lon, lat, alt = pyproj.transform(self.ecef, self.lla, self.mu_history[0,:], self.mu_history[1,:], self.mu_history[2,:], radians=False)
+        if alt.all() == None:
+            lon, lat, alt = pyproj.transform(self.ecef, self.lla, self.mu_history[0,:], self.mu_history[1,:], self.mu_history[2,:], radians=False)
+        else:
+            lon, lat, reject = pyproj.transform(self.ecef, self.lla, self.mu_history[0,:], self.mu_history[1,:], self.mu_history[2,:], radians=False)
+        print("alt shape",alt.shape)
         lla_traj[:,0] = lat
         lla_traj[:,1] = lon
         lla_traj[:,2] = alt
@@ -431,7 +396,54 @@ class EKF():
         fig = plt.figure()
         ax = fig.gca(projection='3d')
         ax.plot(lla_traj[:,1], lla_traj[:,0], lla_traj[:,2], label='our solution')
+        if self.odom_file != None:
+            lat_truth = self.odom_df['GPS(0):Lat[degrees]'].to_numpy()[self.truth_indexes]
+            lon_truth = self.odom_df['GPS(0):Long[degrees]'].to_numpy()[self.truth_indexes]
+            h_truth = self.odom_df['GPS(0):heightMSL[meters]'].to_numpy()[self.truth_indexes]
+            latf = self.odom_df['GPS(0):Lat[degrees]'].values[-1]
+            lonf = self.odom_df['GPS(0):Long[degrees]'].values[-1]
+            hf = h_truth[-1]
+            lat0 = self.odom_df['GPS(0):Lat[degrees]'][0]
+            lon0 = self.odom_df['GPS(0):Long[degrees]'][0]
+            h0 = h_truth[0]
+            plt.plot([lon0],[lat0],[h0],'go')
+            plt.plot([lonf],[latf],[hf],'ro')
+            plt.plot(lon_truth,lat_truth,h_truth,'g',label="DJI's Position Solution")
+
         ax.legend()
+        ax.set_xlim([-122.1759,-122.1754])
+        ax.set_ylim([37.42620,37.42660])
+        ax.set_zlim([0.,2.5])
+        ax.view_init(elev=10., azim=20.)
+
+        if self.odom_file != None:
+            steps = np.arange(len(lat_truth))
+            lat_error = np.abs(lat_truth-lla_traj[:,0])
+            lon_error = np.abs(lon_truth-lla_traj[:,1])
+            h_error = np.abs(h_truth-lla_traj[:,2])
+            print("lat avg: ",np.mean(lat_error))
+            print("lon avg: ",np.mean(lon_error))
+            print("h avg: ",np.mean(h_error))
+            plt.figure()
+            plt.subplot(131)
+            plt.title("Latitude Error [degrees latitude]")
+            plt.ylabel("Latitude Error [degrees latitude]")
+            plt.xlabel("Time Step")
+            plt.ticklabel_format(axis="y", style="sci", scilimits=(0,0))
+            plt.plot(steps,lat_error)
+            plt.subplot(132)
+            plt.xlabel("Time Step")
+            plt.ticklabel_format(axis="y", style="sci", scilimits=(0,0))
+            plt.title("Longitude Error [degrees longitude]")
+            plt.ylabel("Longitude Error [degrees longitude]")
+            plt.plot(steps,lon_error)
+            plt.subplot(133)
+            plt.xlabel("Time Step")
+            plt.title("Altitude Error [m]")
+            plt.ylabel("Altitude Error [m]")
+            plt.plot(steps,h_error)
+
+
 
         # save to file
         df_traj = pd.DataFrame()
@@ -442,7 +454,154 @@ class EKF():
 
         plt.show()
 
+class EKF_H(EKF):
+
+    def __init__(self,sat_file,odom_file=None):
+        # read in data files as dataframe
+        self.sat_df = pd.read_csv(sat_file, index_col=0)
+        self.odom_file = odom_file
+        if odom_file != None:
+            self.odom_df = pd.read_csv(odom_file, index_col=0)
+
+            # concatenate possible time steps from each data file
+            self.times = np.concatenate((self.odom_df['seconds of week [s]'].to_numpy(),self.sat_df['seconds of week [s]'].to_numpy()))
+
+            self.initialized_odom = False
+
+        else:
+            # initialize times
+            self.times = self.sat_df['seconds of week [s]'].to_numpy()
+
+        # sort timesteps and force unique
+        self.times = np.sort(np.unique(self.times))
+
+        # initialize state vector [ altitude ]
+        h0 = 0.0
+        self.mu = np.array([[h0]]).T
+        self.mu_n = self.mu.shape[0]
+        self.mu_history = self.mu.copy()
+
+        # initialize covariance matrix
+        self.P = np.eye(self.mu_n)
+        self.P_history = [np.trace(self.P)]
+
+    def predict_simple(self):
+        """
+            Desc: ekf simple predict step
+            Input(s):
+                dt:     time step difference
+            Output(s):
+                none
+        """
+        # build state transition model matrix
+        F = np.eye(self.mu_n)
+
+        # update predicted state
+        self.mu = F.dot(self.mu)
+
+        # build process noise matrix
+        Q_cov = 0.001
+        Q = np.eye(self.mu_n) * Q_cov
+        # Q = np.ones((3,3)) * Q_cov
+
+        # propagate covariance matrix
+        self.P = F.dot(self.P).dot(F.T) + Q
+
+    def update_barometer(self,baro):
+        """
+            Desc: ekf barometer update step
+            Input(s):
+                baro:   barometer reading
+            Output(s):
+                none
+        """
+        # add zero to end of odom
+        zt = np.array([[baro]])
+
+        # create measurement noise matrix
+        R = np.eye(self.mu_n)*0.5**2
+
+        hu = self.mu.copy().reshape(-1,1)
+        yt = zt - hu
+        H = np.eye(self.mu_n)
+
+        Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
+
+        self.mu = self.mu.reshape((-1,1)) + Kt.dot(yt)
+        self.P = (np.eye(self.mu_n)-Kt.dot(H)).dot(self.P).dot((np.eye(self.mu_n)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
+
+        yt = zt - H.dot(self.mu)
+
+    def run(self):
+        """
+            Desc: run ekf
+            Input(s):
+                none
+            Output(s):
+                none
+        """
+        t_odom_prev = 0.0 # initialize previous odom time
+
+        # setup progress bar
+        print("running kalman filter, please wait...")
+        bar = progress.bar.IncrementalBar('Progress:', max=len(self.times))
+
+        for tt, timestep in enumerate(self.times):
+            # simple predict step
+            self.predict_simple()
+
+            # predict step for odometry
+            if self.odom_df['seconds of week [s]'].isin([timestep]).any():
+                dt_odom = timestep - t_odom_prev
+                t_odom_prev = timestep
+                if not self.initialized_odom:
+                    self.initialized_odom = True
+                    bar.next()
+                else:
+                    odom_timestep = self.odom_df[self.odom_df['seconds of week [s]'] == timestep]
+                    baro_meas = odom_timestep['Normalized barometer:Raw[meters]'].values[0]
+                    self.update_barometer(baro_meas)
+
+            self.mu = np.clip(self.mu,0.0,np.inf) # force to be above zero altitude
+
+            # add values to history
+            self.mu_history = np.hstack((self.mu_history,self.mu))
+            self.P_history.append(np.trace(self.P))
+            bar.next() # progress bar
+
+        bar.finish() # end progress bar
+        # if finish with different num of items, spoof it.
+        if len(self.times) + 1 == self.mu_history.shape[1]:
+            self.mu_history = self.mu_history[:,:-1]
+            self.P_history = self.P_history[:-1]
+
+    def plot(self):
+        # covariance plot
+        plt.figure()
+        plt.title("Trace of Covariance Matrix vs. Time")
+        plt.xlabel("Time [hrs]")
+        plt.ylabel("Trace")
+        plt.plot(self.times,self.P_history)
+
+        fig, ax = plt.subplots()
+        ax.ticklabel_format(useOffset=False)
+        plt.plot(self.times,self.mu_history[0,:])
+        plt.title("h vs Time")
+        plt.xlabel("Time [hrs]")
+        plt.ylabel("h [m]")
+
+        plt.show()
+
 if __name__ == '__main__':
+    # latitude and longitude EKF
     ekf = EKF('./data/sat_data_v2_flight_1.csv','./data/dji_data_flight_1.csv')
     ekf.run()
-    ekf.plot()
+    #ekf.plot()
+
+    # altitude EKF
+    ekf_h = EKF_H('./data/sat_data_v2_flight_1.csv','./data/dji_data_flight_1.csv')
+    ekf_h.run()
+    #ekf_h.plot()
+
+    # combine both EKFs
+    ekf.plot(ekf_h.mu_history[0,:])
