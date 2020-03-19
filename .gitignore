@@ -27,4 +27,4 @@ __pycache__/
 *.pyc
 
 # don't add new calculated trajectory
-./data/calculated_trajectory.csv
+data/calculated_trajectory.csv
