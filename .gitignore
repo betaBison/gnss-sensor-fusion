@@ -28,3 +28,4 @@ __pycache__/
 
 # don't add new calculated trajectory
 data/calculated_trajectory.csv
+data/wls_calculated_trajectory.csv
