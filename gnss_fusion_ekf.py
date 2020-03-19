@@ -39,10 +39,6 @@ class EKF():
             # sort timesteps and force unique
             self.times = np.sort(np.unique(self.times))
 
-            # initial and final time values
-            # self.ti = min(self.odom_df['seconds of week [s]'].min(),self.sat_df['seconds of week [s]'].min())
-            # self.tf = max(self.odom_df['seconds of week [s]'].max(),self.sat_df['seconds of week [s]'].max())
-
             self.initialized_odom = False
 
             def find_nearest(array, value):
@@ -85,7 +81,12 @@ class EKF():
     def ECEF_2_ENU(self,x_ECEF,xref,lat0,lon0):
         """
         input(s)
-            x_ECEF: 3 X N array
+            x_ECEF: 3 X N array in ECEF
+            xref: reference [x,y,z] location
+            lat0: latitude reference
+            lon0: longitude reference
+        output(s):
+            x_ENU: 3 X N array in east north up
         """
         x_ECEF_ref = xref
 
@@ -105,6 +106,16 @@ class EKF():
         return x_ENU
 
     def check_data(self,xref,lat0,lon0,plot_it = False):
+        """
+        Desc: Filters self.sat_df to only be satellites whose elevation
+        angles are above the cutoff angle (self.cutoff_angle)
+
+        input(s)
+            xref: reference [x,y,z] location
+            lat0: latitude reference
+            lon0: longitude reference
+            plot_it: if True, it plots used satellites
+        """
         sv_x = self.sat_df['sat x ECEF [m]'].to_numpy().reshape((1,-1))
         sv_y = self.sat_df['sat y ECEF [m]'].to_numpy().reshape((1,-1))
         sv_z = self.sat_df['sat z ECEF [m]'].to_numpy().reshape((1,-1))
@@ -114,14 +125,12 @@ class EKF():
         elev_angles = np.degrees(np.arctan2(sv_ENU[2,:],np.sqrt(sv_ENU[0,:]**2 + sv_ENU[1,:]**2)))
         self.sat_df['elevation_angle'] = elev_angles
 
-
         if plot_it:
             SVs = np.sort(np.unique(self.sat_df['SV']))
             for sv in SVs:
                 sv_subset = self.sat_df[self.sat_df['SV'] == sv]
                 subset_time = sv_subset['seconds of week [s]'].to_numpy()
                 subset_angle = sv_subset['elevation_angle'].to_numpy()
-                # if sv in [7,30,28,9,8,5]:
                 if True:
                     plt.plot(subset_time,subset_angle,label=sv)
                     plt.ylabel('Elevation Angle [degrees]')
@@ -185,72 +194,20 @@ class EKF():
             R[ii,ii] *= sigmas[ii]**2
         yt = zt - h
 
-        # R_cov = 8.**2
-        # R = np.eye(num_sats)*R_cov
-
         Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
 
         self.mu = self.mu.reshape((-1,1)) + Kt.dot(yt)
         self.P = (np.eye(self.mu_n)-Kt.dot(H)).dot(self.P).dot((np.eye(self.mu_n)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
 
         yt = zt - H.dot(self.mu)
-
-        # Kt = self.P.dot(H)
-
-
-    def update_gnss_raw_and_baro(self,mes,sat_x,sat_y,sat_z,sigmas,time_correction):
-        """
-            Desc: ekf update gnss step
-            Input(s):
-                mes:    psuedorange measurements [N x 1]
-                sat_pos satellite position [N x 3]
-            Output(s):
-                none
-        """
-        num_sats = mes.shape[0]
-        zt = mes
-        H = np.zeros((num_sats+1,self.mu_n))
-        h = np.zeros((num_sats+1,1))
-        R = np.eye(num_sats+1)
-        for ii in range(num_sats):
-            dist = np.sqrt((sat_x[ii]-self.mu[0])**2 + (sat_y[ii]-self.mu[1])**2 + (sat_z[ii]-self.mu[2])**2)
-            H[ii,0] = (self.mu[0]-sat_x[ii])/dist
-            H[ii,1] = (self.mu[1]-sat_y[ii])/dist
-            H[ii,2] = (self.mu[2]-sat_z[ii])/dist
-            H[ii,3] = 1.0
-            c = 299792458.0
-            h[ii] = dist + self.mu[3] - time_correction[ii] * c # adjusting for relativity??
-            R[ii,ii] *= (sigmas[ii])**2
-
-        # barometer
-        # H[num_sats,0] =
-        # H[num_sats,1] =
-        # H[num_sats,2] =
-        # H[num_sats,3] =
-        # h[num_sats] =
-        # R[num_sats,num_sats] *= 0.0001
-
-        yt = zt - h
-
-        # R_cov = 8.**2
-        # R = np.eye(num_sats)*R_cov
-
-        Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
-
-        self.mu = self.mu.reshape((-1,1)) + Kt.dot(yt)
-        self.P = (np.eye(self.mu_n)-Kt.dot(H)).dot(self.P).dot((np.eye(self.mu_n)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
-
-        yt = zt - H.dot(self.mu)
-
-        # Kt = self.P.dot(H)
 
     def update_gnss(self,lat,lon,alt):
         """
             Desc: ekf update gnss step
             Input(s):
-                lat:
-                lon:
-                alt:
+                lat: latitude
+                lon: longitude
+                alt: altitude
             Output(s):
                 none
         """
@@ -272,9 +229,6 @@ class EKF():
         self.P[:3,:3] = (np.eye(3)-Kt.dot(H)).dot(self.P[:3,:3]).dot((np.eye(3)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
 
         yt = zt - H.dot(self.mu[:3])
-
-        # Kt = self.P.dot(H)
-
 
     def run(self):
         """
@@ -442,8 +396,6 @@ class EKF():
             plt.title("Altitude Error [m]")
             plt.ylabel("Altitude Error [m]")
             plt.plot(steps,h_error)
-
-
 
         # save to file
         df_traj = pd.DataFrame()

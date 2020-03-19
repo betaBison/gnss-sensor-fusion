@@ -34,12 +34,8 @@ class EKF():
             x0, y0, z0 = pyproj.transform(self.lla, self.ecef, self.lon0, self.lat0, self.h0 , radians=False)
 
             # concatenate possible time steps from each data file
-            # self.times = np.concatenate((self.odom_df['seconds of week [s]'].to_numpy(),self.sat_df['seconds of week [s]'].to_numpy()))
             self.times = self.sat_df['seconds of week [s]'].to_numpy()
 
-            # initial and final time values
-            # self.ti = min(self.odom_df['seconds of week [s]'].min(),self.sat_df['seconds of week [s]'].min())
-            # self.tf = max(self.odom_df['seconds of week [s]'].max(),self.sat_df['seconds of week [s]'].max())
             # sort timesteps and force unique
             self.times = np.sort(np.unique(self.times))
 
@@ -78,25 +74,6 @@ class EKF():
         self.P = np.eye(self.mu_n)*10E2
         self.P_history = [np.trace(self.P)]
 
-        # if odom_file != None:
-        #     # only use the best satellites
-        #     self.check_data(self.mu,self.lat0,self.lon0)
-
-
-        # for tt in range(len(self.times)):
-        # # for tt in range(1):
-        #     sat_data_at_timestep = self.sat_df[self.sat_df['seconds of week [s]'] == self.times[tt]]
-        #     for ii in range(len(sat_data_at_timestep)):
-        #         x_s = sat_data_at_timestep['sat x ECEF [m]'].to_numpy()[ii]
-        #         y_s = sat_data_at_timestep['sat y ECEF [m]'].to_numpy()[ii]
-        #         z_s = sat_data_at_timestep['sat z ECEF [m]'].to_numpy()[ii]
-        #         expected = np.linalg.norm([x_s,y_s,z_s]-self.mu[:3][0])
-        #         actual = sat_data_at_timestep['pr [m]'].to_numpy()[ii]
-        #         print(sat_data_at_timestep['SV'].to_numpy()[ii])
-        #         c = 3.0E8
-        #         print("diff = ",(expected-actual)/c,"expected = ",expected,"actual = ",actual)
-
-
         self.wls_results = np.zeros((7,len(self.times)))
 
         # setup progress bar
@@ -112,10 +89,6 @@ class EKF():
                 x_calc, bu_calc = self.least_squares(x_calc,bu_calc,input)
             self.wls_results[:3,tt] = x_calc
             self.wls_results[3,tt] = bu_calc
-
-            # print("x = ",x_calc)
-            # c = 3.0E8
-            # print("b = ",bu_calc,"m, ",bu_calc/c,"s")
             bar.next()
         bar.finish()
 
@@ -124,35 +97,34 @@ class EKF():
         self.wls_results[5,:] = wls_lon
         self.wls_results[6,:] = wls_alt
 
-        #for ii in range(len(self.times)):
-        #    print(self.wls_results[:4,ii].T)
+        # plot all of the weighted least squares results
+        if False:
+            plt.figure()
+            plt.subplot(231)
+            plt.title("ECEF X vs Time")
+            plt.plot(self.times,self.wls_results[0,:])
 
-        # plt.figure()
-        # plt.subplot(231)
-        # plt.title("ECEF X vs Time")
-        # plt.plot(self.times,self.wls_results[0,:])
-        #
-        # plt.subplot(232)
-        # plt.title("ECEF Y vs Time")
-        # plt.plot(self.times,self.wls_results[1,:])
-        #
-        # plt.subplot(233)
-        # plt.title("ECEF Z vs Time")
-        # plt.plot(self.times,self.wls_results[2,:])
-        #
-        # plt.subplot(234)
-        # plt.title("Bu vs Time")
-        # plt.plot(self.times,self.wls_results[3,:])
-        #
-        #
-        # plt.subplot(235)
-        # plt.title("Lat/Lon vs Time")
-        # plt.plot(self.wls_results[5,:],self.wls_results[4,:])
-        #
-        # plt.subplot(236)
-        # plt.title("Altitude vs Time")
-        # plt.plot(self.times,self.wls_results[6,:])
-        # # plt.show()
+            plt.subplot(232)
+            plt.title("ECEF Y vs Time")
+            plt.plot(self.times,self.wls_results[1,:])
+
+            plt.subplot(233)
+            plt.title("ECEF Z vs Time")
+            plt.plot(self.times,self.wls_results[2,:])
+
+            plt.subplot(234)
+            plt.title("Bu vs Time")
+            plt.plot(self.times,self.wls_results[3,:])
+
+
+            plt.subplot(235)
+            plt.title("Lat/Lon vs Time")
+            plt.plot(self.wls_results[5,:],self.wls_results[4,:])
+
+            plt.subplot(236)
+            plt.title("Altitude vs Time")
+            plt.plot(self.times,self.wls_results[6,:])
+            plt.show()
 
         self.mu[3][0] = bu_calc
         self.mu_history = self.mu.copy()
@@ -164,11 +136,15 @@ class EKF():
         df_wls['elevation'] = wls_alt
         df_wls.to_csv('./data/wls_calculated_trajectory.csv',index=False)
 
-
     def ECEF_2_ENU(self,x_ECEF,xref,lat0,lon0):
         """
         input(s)
-            x_ECEF: 3 X N array
+            x_ECEF: 3 X N array in ECEF
+            xref: reference [x,y,z] location
+            lat0: latitude reference
+            lon0: longitude reference
+        output(s):
+            x_ENU: 3 X N array in east north up
         """
         x_ECEF_ref = xref
 
@@ -187,47 +163,15 @@ class EKF():
         x_ENU = np.dot(T_enu,(x_ECEF-x_REF))
         return x_ENU
 
-    def check_data(self,xref,lat0,lon0):
-        # ans = self.ECEF_2_ENU(self.mu,self.mu,lat0,lon0)
-        SVs = np.sort(np.unique(self.sat_df['SV']))
-        # plt.figure()
-        for sv in SVs:
-            sv_subset = self.sat_df[self.sat_df['SV'] == sv]
-            sv_x = sv_subset['sat x ECEF [m]'].to_numpy().reshape((1,-1))
-            sv_y = sv_subset['sat y ECEF [m]'].to_numpy().reshape((1,-1))
-            sv_z = sv_subset['sat z ECEF [m]'].to_numpy().reshape((1,-1))
-            sv_time = sv_subset['seconds of week [s]'].to_numpy()
-            sv_xyz = np.vstack((sv_x,sv_y,sv_z))
-            sv_ENU = self.ECEF_2_ENU(sv_xyz,self.mu[:3],lat0,lon0)
-
-
-            elev_angles = np.degrees(np.arctan2(sv_ENU[2,:],np.sqrt(sv_ENU[0,:]**2 + sv_ENU[1,:]**2)))
-            # if sv in [7,30,28,9,8,5]:
-            # if True:
-                # plt.plot(sv_time,elev_angles,label=sv)
-                # plt.ylabel('Elevation Angle [degrees]')
-                # plt.legend()
-                # plt.title("Elevation Angle vs. Time")
-                # plt.plot(self.sat_df[self.sat_df['SV'] == sv]['seconds of week [s]'],self.sat_df[self.sat_df['SV'] == sv]['pr [m]'])
-        # plt.show()
-        # plt.legend()
-        # plt.show()
-
-        is7 = self.sat_df['SV'] == 7
-        is30 = self.sat_df['SV'] == 30
-        is28 = self.sat_df['SV'] == 28
-        is9 = self.sat_df['SV'] == 9
-        is8 = self.sat_df['SV'] == 8
-        is5 = self.sat_df['SV'] == 5
-
-        self.sat_df = self.sat_df[is7 | is30 | is28 | is9 | is8 | is5]
-
     def least_squares(self,x_0,bu,sat_df):
         """
         input(s)
             x:  [3 x 1] state estimate
             bu: clock bias
             sat_df: satellite data frame
+        output(s)
+            x:  [3 x 1] new state estimate
+            bu: new clock bias
         """
         numSats = len(sat_df)
         dist = np.zeros((numSats,1))
@@ -275,8 +219,6 @@ class EKF():
         # build process noise matrix
         Q_cov = 0.5
         Q = np.eye(self.mu_n) * Q_cov
-        # Q[3,3] = 100.0
-        # Q = np.ones((3,3)) * Q_cov
 
         # propagate covariance matrix
         self.P = F.dot(self.P).dot(F.T) + Q
@@ -306,18 +248,12 @@ class EKF():
             R[ii,ii] *= sigmas[ii]**2
         yt = zt - h
 
-        # R_cov = 8.**2
-        # R = np.eye(num_sats)*R_cov
-
-
         Kt = self.P.dot(H.T).dot(np.linalg.inv(R + H.dot(self.P).dot(H.T)))
 
         self.mu = self.mu.reshape((-1,1)) + Kt.dot(yt)
         self.P = (np.eye(self.mu_n)-Kt.dot(H)).dot(self.P).dot((np.eye(self.mu_n)-Kt.dot(H)).T) + Kt.dot(R).dot(Kt.T)
 
         yt = zt - H.dot(self.mu)
-
-        # Kt = self.P.dot(H)
 
 
     def run(self):
@@ -328,12 +264,9 @@ class EKF():
             Output(s):
                 none
         """
-        t_odom_prev = 0.0 # initialize previous odom time
-
         # setup progress bar
         print("running kalman filter, please wait...")
         bar = progress.bar.IncrementalBar('Progress:', max=len(self.times))
-
 
         for tt, timestep in enumerate(self.times):
             # update gnss step
@@ -448,9 +381,9 @@ class EKF():
             lat_error = np.abs(lat_truth-lla_traj[:,0][self.sat_indexes])
             lon_error = np.abs(lon_truth-lla_traj[:,1][self.sat_indexes])
             h_error = np.abs(h_truth-lla_traj[:,2][self.sat_indexes])
-            print("lat avg: ",np.mean(lat_error))
-            print("lon avg: ",np.mean(lon_error))
-            print("h avg: ",np.mean(h_error))
+            print("lat error avg: ",np.mean(lat_error))
+            print("lon error avg: ",np.mean(lon_error))
+            print("h error avg: ",np.mean(h_error))
             plt.figure()
             plt.subplot(131)
             plt.title("Latitude Error [degrees latitude]")
@@ -469,7 +402,6 @@ class EKF():
             plt.title("Altitude Error [m]")
             plt.ylabel("Altitude Error [m]")
             plt.plot(steps,h_error)
-
 
         # save to file
         df_traj = pd.DataFrame()
