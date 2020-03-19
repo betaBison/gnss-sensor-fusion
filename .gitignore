@@ -25,3 +25,6 @@
 # compilied python
 __pycache__/
 *.pyc
+
+# don't add new calculated trajectory
+./data/calculated_trajectory.csv
