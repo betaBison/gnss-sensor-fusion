@@ -13,11 +13,13 @@ import matplotlib.pyplot as plt
 import pyproj
 import math
 import progress.bar
+from mpl_toolkits.mplot3d import Axes3D
 
 class EKF():
     def __init__(self,sat_file,odom_file=None):
         # read in data files as dataframe
         self.sat_df = pd.read_csv(sat_file, index_col=0)
+        self.odom_file = odom_file
         if odom_file != None:
             self.odom_df = pd.read_csv(odom_file, index_col=0)
 
@@ -38,6 +40,19 @@ class EKF():
             # initial and final time values
             # self.ti = min(self.odom_df['seconds of week [s]'].min(),self.sat_df['seconds of week [s]'].min())
             # self.tf = max(self.odom_df['seconds of week [s]'].max(),self.sat_df['seconds of week [s]'].max())
+            # sort timesteps and force unique
+            self.times = np.sort(np.unique(self.times))
+
+            def find_nearest(array, value):
+                array = np.asarray(array)
+                idx = (np.abs(array - value)).argmin()
+                return idx
+
+            # indexes for comparing later
+            self.sat_indexes = []
+            for ii in range(len(self.odom_df['seconds of week [s]'].to_numpy())):
+                ix = find_nearest(self.times,self.odom_df['seconds of week [s]'].values[ii])
+                self.sat_indexes.append(ix)
 
         else:
             # set initial positions
@@ -52,8 +67,7 @@ class EKF():
             # initialize times
             self.times = self.sat_df['seconds of week [s]'].to_numpy()
 
-        # sort timesteps and force unique
-        self.times = np.sort(np.unique(self.times))
+
 
         # initialize state vector [ x, y, z ]
         self.mu = np.array([[x0,y0,z0,0.0]]).T
@@ -113,32 +127,32 @@ class EKF():
         #for ii in range(len(self.times)):
         #    print(self.wls_results[:4,ii].T)
 
-        plt.figure()
-        plt.subplot(231)
-        plt.title("ECEF X vs Time")
-        plt.plot(self.times,self.wls_results[0,:])
-
-        plt.subplot(232)
-        plt.title("ECEF Y vs Time")
-        plt.plot(self.times,self.wls_results[1,:])
-
-        plt.subplot(233)
-        plt.title("ECEF Z vs Time")
-        plt.plot(self.times,self.wls_results[2,:])
-
-        plt.subplot(234)
-        plt.title("Bu vs Time")
-        plt.plot(self.times,self.wls_results[3,:])
-
-
-        plt.subplot(235)
-        plt.title("Lat/Lon vs Time")
-        plt.plot(self.wls_results[5,:],self.wls_results[4,:])
-
-        plt.subplot(236)
-        plt.title("Altitude vs Time")
-        plt.plot(self.times,self.wls_results[6,:])
-        # plt.show()
+        # plt.figure()
+        # plt.subplot(231)
+        # plt.title("ECEF X vs Time")
+        # plt.plot(self.times,self.wls_results[0,:])
+        #
+        # plt.subplot(232)
+        # plt.title("ECEF Y vs Time")
+        # plt.plot(self.times,self.wls_results[1,:])
+        #
+        # plt.subplot(233)
+        # plt.title("ECEF Z vs Time")
+        # plt.plot(self.times,self.wls_results[2,:])
+        #
+        # plt.subplot(234)
+        # plt.title("Bu vs Time")
+        # plt.plot(self.times,self.wls_results[3,:])
+        #
+        #
+        # plt.subplot(235)
+        # plt.title("Lat/Lon vs Time")
+        # plt.plot(self.wls_results[5,:],self.wls_results[4,:])
+        #
+        # plt.subplot(236)
+        # plt.title("Altitude vs Time")
+        # plt.plot(self.times,self.wls_results[6,:])
+        # # plt.show()
 
         self.mu[3][0] = bu_calc
         self.mu_history = self.mu.copy()
@@ -244,31 +258,6 @@ class EKF():
         bu_new = bu + delta[3,0]
         return x_new,bu_new
 
-    def predict_imu(self,odom,dt):
-        """
-            Desc: ekf predict imu step
-            Input(s):
-                odom:   odometry [vel_x, vel_y, vel_z] [3 x 1]
-                dt:     time step difference
-            Output(s):
-                none
-        """
-        # build state transition model matrix
-        F = np.eye(self.mu_n)
-
-        # build odom transition matrix
-        B = np.eye(self.mu_n) * dt
-
-        # update predicted state
-        self.mu = F.dot(self.mu) + B.dot(odom)
-
-        # build process noise matrix
-        Q_cov = 1E-5
-        Q = np.eye(self.mu_n) * Q_cov
-
-        # propagate covariance matrix
-        self.P = F.dot(self.P).dot(F.T) + Q
-
     def predict_simple(self):
         """
             Desc: ekf simple predict step
@@ -284,7 +273,7 @@ class EKF():
         self.mu = F.dot(self.mu)
 
         # build process noise matrix
-        Q_cov = 0.002
+        Q_cov = 0.5
         Q = np.eye(self.mu_n) * Q_cov
         # Q[3,3] = 100.0
         # Q = np.ones((3,3)) * Q_cov
@@ -347,19 +336,6 @@ class EKF():
 
 
         for tt, timestep in enumerate(self.times):
-            # # predict step for odometry
-            # if self.odom_df['seconds of week [s]'].isin([timestep]).any():
-            #     dt_odom = timestep - t_odom_prev
-            #     t_odom_prev = timestep
-            #     if tt == 0:
-            #         bar.next()
-            #         continue
-            #     odom_timestep = self.odom_df[self.odom_df['seconds of week [s]'] == timestep]
-            #     odom_vel_x = odom_timestep['ECEF_vel_x'].values[0]
-            #     odom_vel_y = odom_timestep['ECEF_vel_y'].values[0]
-            #     odom_vel_z = odom_timestep['ECEF_vel_z'].values[0]
-            #     self.predict_imu(np.array([[odom_vel_x,odom_vel_y,odom_vel_z]]).T,dt_odom)
-
             # update gnss step
             if self.sat_df['seconds of week [s]'].isin([timestep]).any():
                 sat_timestep = self.sat_df[self.sat_df['seconds of week [s]'] == timestep]
@@ -424,11 +400,76 @@ class EKF():
         lla_traj[:,2] = alt
         fig, ax = plt.subplots()
         ax.ticklabel_format(useOffset=False)
-        plt.plot(lla_traj[:,1],lla_traj[:,0])
-        plt.plot(self.lon0,self.lat0,'ro')
+        plt.plot(lla_traj[:,1],lla_traj[:,0],'b',label='Our Position Solution')
+
         plt.title("Trajectory")
         plt.xlabel("Longitude")
         plt.ylabel("Latitude")
+
+        if self.odom_file != None:
+            lat_truth = self.odom_df['GPS(0):Lat[degrees]'].to_numpy()
+            lon_truth = self.odom_df['GPS(0):Long[degrees]'].to_numpy()
+            latf = self.odom_df['GPS(0):Lat[degrees]'].values[-1]
+            lonf = self.odom_df['GPS(0):Long[degrees]'].values[-1]
+            lat0 = self.odom_df['GPS(0):Lat[degrees]'][0]
+            lon0 = self.odom_df['GPS(0):Long[degrees]'][0]
+            plt.plot(lon0,lat0,'go')
+            plt.plot(lonf,latf,'ro')
+            plt.plot(lon_truth,lat_truth,'g',label="DJI's Position Solution")
+        plt.legend()
+        plt.xlim([-122.1759,-122.1754])
+        plt.ylim([37.42620,37.42660])
+
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+        ax.plot(lla_traj[:,1], lla_traj[:,0], lla_traj[:,2], label='our solution')
+        if self.odom_file != None:
+            lat_truth = self.odom_df['GPS(0):Lat[degrees]'].to_numpy()
+            lon_truth = self.odom_df['GPS(0):Long[degrees]'].to_numpy()
+            h_truth = self.odom_df['GPS(0):heightMSL[meters]'].to_numpy()
+            latf = self.odom_df['GPS(0):Lat[degrees]'].values[-1]
+            lonf = self.odom_df['GPS(0):Long[degrees]'].values[-1]
+            hf = self.odom_df['GPS(0):heightMSL[meters]'].values[-1]
+            lat0 = self.odom_df['GPS(0):Lat[degrees]'][0]
+            lon0 = self.odom_df['GPS(0):Long[degrees]'][0]
+            h0 = self.odom_df['GPS(0):heightMSL[meters]'][0]
+            plt.plot([lon0],[lat0],[h0],'go')
+            plt.plot([lonf],[latf],[hf],'ro')
+            plt.plot(lon_truth,lat_truth,h_truth,'g',label="DJI's Position Solution")
+
+        ax.legend()
+        ax.set_xlim([-122.1759,-122.1754])
+        ax.set_ylim([37.42620,37.42660])
+        ax.set_zlim([0.,60.])
+        ax.view_init(elev=10., azim=20.)
+
+        if self.odom_file != None:
+            steps = np.arange(len(lat_truth))
+            lat_error = np.abs(lat_truth-lla_traj[:,0][self.sat_indexes])
+            lon_error = np.abs(lon_truth-lla_traj[:,1][self.sat_indexes])
+            h_error = np.abs(h_truth-lla_traj[:,2][self.sat_indexes])
+            print("lat avg: ",np.mean(lat_error))
+            print("lon avg: ",np.mean(lon_error))
+            print("h avg: ",np.mean(h_error))
+            plt.figure()
+            plt.subplot(131)
+            plt.title("Latitude Error [degrees latitude]")
+            plt.ylabel("Latitude Error [degrees latitude]")
+            plt.xlabel("Time Step")
+            plt.ticklabel_format(axis="y", style="sci", scilimits=(0,0))
+            plt.plot(steps,lat_error)
+            plt.subplot(132)
+            plt.xlabel("Time Step")
+            plt.ticklabel_format(axis="y", style="sci", scilimits=(0,0))
+            plt.title("Longitude Error [degrees longitude]")
+            plt.ylabel("Longitude Error [degrees longitude]")
+            plt.plot(steps,lon_error)
+            plt.subplot(133)
+            plt.xlabel("Time Step")
+            plt.title("Altitude Error [m]")
+            plt.ylabel("Altitude Error [m]")
+            plt.plot(steps,h_error)
+
 
         # save to file
         df_traj = pd.DataFrame()
