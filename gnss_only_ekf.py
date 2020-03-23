@@ -335,9 +335,8 @@ class EKF():
         ax.ticklabel_format(useOffset=False)
         plt.plot(lla_traj[:,1],lla_traj[:,0],'b',label='Our Position Solution')
 
-        plt.title("Trajectory")
-        plt.xlabel("Longitude")
-        plt.ylabel("Latitude")
+        plt.xlabel("Longitude [deg]")
+        plt.ylabel("Latitude [deg]")
 
         if self.odom_file != None:
             lat_truth = self.odom_df['GPS(0):Lat[degrees]'].to_numpy()
@@ -352,6 +351,7 @@ class EKF():
         plt.legend()
         plt.xlim([-122.1759,-122.1754])
         plt.ylim([37.42620,37.42660])
+        ax.set_yticks([37.4262,37.4263,37.4264,37.4265,37.4266])
 
         fig = plt.figure()
         ax = fig.gca(projection='3d')
@@ -371,9 +371,15 @@ class EKF():
             plt.plot(lon_truth,lat_truth,h_truth,'g',label="DJI's Position Solution")
 
         ax.legend()
+        ax.ticklabel_format(useOffset=False)
         ax.set_xlim([-122.1759,-122.1754])
         ax.set_ylim([37.42620,37.42660])
         ax.set_zlim([0.,60.])
+        ax.set_xlabel('\n\n Longitude [deg]')
+        ax.set_ylabel('Latitude [deg]')
+        ax.set_zlabel('Altitude [m]')
+        ax.set_xticks([-122.1759, -122.17565, -122.1754])
+        ax.set_yticks([37.42630,37.42640,37.42650])
         ax.view_init(elev=10., azim=20.)
 
         if self.odom_file != None:
