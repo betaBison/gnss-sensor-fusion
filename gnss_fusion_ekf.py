@@ -72,6 +72,16 @@ class EKF():
         self.P = np.eye(self.mu_n)*10E2
         self.P_history = [np.trace(self.P)]
 
+        if odom_file != None:
+            t0 = self.sat_df['seconds of week [s]'].to_numpy()[0]
+            x_calc = [x0,y0,z0]
+            bu_calc = 0.0
+            input = self.sat_df[self.sat_df['seconds of week [s]'] == t0]
+            for ii in range(20):
+                x_calc, bu_calc = self.least_squares(x_calc,bu_calc,input)
+
+            self.mu[3][0] = bu_calc
+
         if odom_file != None and 'pr [m]' in self.sat_df.columns:
             # only use the best satellites
             self.cutoff_angle = 20.0
@@ -140,6 +150,45 @@ class EKF():
             plt.show()
 
         self.sat_df = self.sat_df[self.sat_df['elevation_angle'] > self.cutoff_angle]
+
+    def least_squares(self,x_0,bu,sat_df):
+        """
+        input(s)
+            x:  [3 x 1] state estimate
+            bu: clock bias
+            sat_df: satellite data frame
+        output(s)
+            x:  [3 x 1] new state estimate
+            bu: new clock bias
+        """
+        numSats = len(sat_df)
+        dist = np.zeros((numSats,1))
+
+        G = np.zeros((numSats,4))
+        W = np.eye(numSats)
+        for ii in range(numSats):
+            x_s = sat_df['sat x ECEF [m]'].to_numpy()[ii]
+            y_s = sat_df['sat y ECEF [m]'].to_numpy()[ii]
+            z_s = sat_df['sat z ECEF [m]'].to_numpy()[ii]
+
+            dist[ii] = np.sqrt((x_s-x_0[0])**2 + \
+                               (y_s-x_0[1])**2 + \
+                               (z_s-x_0[2])**2)
+            G[ii,:] = [-(x_s - x_0[0])/dist[ii],
+                       -(y_s - x_0[1])/dist[ii],
+                       -(z_s - x_0[2])/dist[ii],
+                       1.0]
+            W[ii,ii] *= 1./sat_df['Pr_sigma'].to_numpy()[ii]
+
+        c = 299792458.0
+        relativity = sat_df['idk wtf this is'].to_numpy().reshape(-1,1) * c # adjusting for relativity??
+        rho_0 = dist + bu - relativity
+        rho_dif = sat_df['pr [m]'].to_numpy().reshape(-1,1) - rho_0
+        # delta = np.linalg.inv(G.T.dot(G)).dot(G.T).dot(rho_dif)
+        delta = np.linalg.pinv(W.dot(G)).dot(W).dot(rho_dif)
+        x_new = x_0 + delta[0:3,0]
+        bu_new = bu + delta[3,0]
+        return x_new,bu_new
 
     def predict_imu(self,odom,dt):
         """
