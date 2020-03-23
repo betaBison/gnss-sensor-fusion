@@ -193,8 +193,8 @@ class EKF():
             W[ii,ii] *= 1./sat_df['Pr_sigma'].to_numpy()[ii]
 
         c = 299792458.0
-
-        rho_0 = dist + bu - sat_df['idk wtf this is'].to_numpy()[ii] * c # adjusting for relativity??
+        relativity = sat_df['idk wtf this is'].to_numpy().reshape(-1,1) * c # adjusting for relativity??
+        rho_0 = dist + bu - relativity
         rho_dif = sat_df['pr [m]'].to_numpy().reshape(-1,1) - rho_0
         # delta = np.linalg.inv(G.T.dot(G)).dot(G.T).dot(rho_dif)
         delta = np.linalg.pinv(W.dot(G)).dot(W).dot(rho_dif)

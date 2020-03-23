@@ -15,7 +15,7 @@ The current default is to use raw GNSS signals and IMU velocity for an EKF that 
 
 An EKF using ONLY raw GNSS signals to estimate position can be run with:   
 `python3 gnss_only_ekf.py`   
-It currently runs weighted least squares to obtain an initial estimate for the initial states. It assumes a static motion model. The weighted least square position solution is currently unreliable. States for the EKF are [ECEF X, ECEF Y, ECEF Z, GNSS time bias].
+It currently runs weighted least squares to obtain an initial estimate for the initial states. It assumes a static motion model. The weighted least square position solution is also saved to file. States for the EKF are [ECEF X, ECEF Y, ECEF Z, GNSS time bias].
 
 A toy 3 DOF example can be run with:  
 `python3 gnss_only_ekf_toy.py`
