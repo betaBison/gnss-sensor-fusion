@@ -1,5 +1,7 @@
 # gnss-sensor-fusion
-Extended Kalman Filter (EKF) for position estimation using raw GNSS signals, IMU data, and barometer. The provided raw GNSS data is from a Pixel 3 XL and the provided IMU & barometer data is from a consumer drone flight log.
+Extended Kalman Filter (EKF) for position estimation using raw GNSS signals, IMU data, and barometer. The provided raw GNSS data is from a Pixel 3 XL and the provided IMU & barometer data is from a consumer drone flight log.  
+  
+Project overview presentation can be viewed [here](https://youtu.be/m7BPbx05Vro).
 
 ## Setup
 This repo was built using Python3. A number of packages are needed to run all files including at least:  
